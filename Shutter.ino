@@ -1,19 +1,27 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 #include <elapsedMillis.h>
+#include <pins_arduino.h>
+#include <Arduino.h>
+
+// LoLin NodeMCU V3, ESP-12E
 
 // https://www.posital.com/en/products/communication-interface/ssi/ssi-encoder.php
 
-#define SSI_CLOCK_PIN	0
-#define SSI_DATA_PIN	1
-#define LED_PIN			2
-#define DEBUG_PIN		3
+static const uint8_t ssi_data_pin = D2;		// ssi data
+static const uint8_t ssi_clk_pin = D3;		// ssi clk
+static const uint8_t led_pin = D4;			// i'm alive blinker
+static const uint8_t debug_pin = D5;		// if grounded, debug to serial port 
 
-#define POS_BITS		13
+static const String version = "1.0";
+static int ssi_clock_width = 200;
+
+#define POS_BITS		12
 #define POS_MASK		((1 << POS_BITS) - 1)
 #define MAX_POS			(1 << POS_BITS)
 #define TURN_BITS		12
 #define TURN_MASK		((1 << TURN_BITS) - 1)
+#define TOTAL_BITS		25
 
 #define DEBUG
 #ifdef DEBUG
@@ -34,6 +42,7 @@ struct knownNetwork {
 	const char* password;
 } knownNetworks[] = {
 	{ "TheBlumz", "gandalph1",},
+	{ "TheBlumz5", "gandalph1", },
 	{ "wo", "",},
 };
 const int nNetworks = sizeof(knownNetworks) / sizeof(struct knownNetwork);
@@ -41,21 +50,23 @@ const int nNetworks = sizeof(knownNetworks) / sizeof(struct knownNetwork);
 WiFiServer server(80);
 
 bool debugging() {
-	return true;
-	// return digitalRead(DEBUG_PIN) == 1;
+	return digitalRead(debug_pin) == 0;
 }
 
 void setup()
 {
-	pinMode(SSI_CLOCK_PIN, OUTPUT);
-	pinMode(SSI_DATA_PIN, INPUT);
-	pinMode(LED_PIN, OUTPUT);
+	pinMode(ssi_clk_pin, OUTPUT);
+	digitalWrite(ssi_clk_pin, HIGH);
 
-	digitalWrite(LED_PIN, HIGH);
-	digitalWrite(SSI_CLOCK_PIN, HIGH);
+	pinMode(ssi_data_pin, INPUT);
+
+	pinMode(led_pin, OUTPUT);
+	digitalWrite(led_pin, HIGH);
+
+	pinMode(debug_pin, INPUT_PULLUP);
 
 	debugbegin(9600);
-	debugln("Wise40 Dome Shutter Server.");
+	debugln("\nWise40 Dome Shutter Server.");
 
 	WiFi.mode(WIFI_STA);
 	delay(500);
@@ -63,6 +74,7 @@ void setup()
 
 	server.begin();
 	debugln("Server started.");
+	digitalWrite(led_pin, LOW);
 }
 
 String enc_type(uint8_t t) {
@@ -96,7 +108,7 @@ void ConnectToWifiNetwork() {
 	}
 
 	for (n = 0; n < nDetected; n++) {
-		for (kp = knownNetworks; !connected && (kp - knownNetworks < nNetworks); kp++) {
+		for (kp = &knownNetworks[0]; !connected && (kp - knownNetworks < nNetworks); kp++) {
 			int attempts, attempt;
 
 			for (attempts = 5, attempt = 0; attempt < attempts; attempt++) {
@@ -133,82 +145,181 @@ void ConnectToWifiNetwork() {
 }
 
 void blink() {
-	if (timeFromLastBlink > blinkInterval ) {
-		digitalWrite(LED_PIN, LOW);
-		delay(500);
-		digitalWrite(LED_PIN, HIGH);
-		delay(500);
-		digitalWrite(LED_PIN, LOW);
-		delay(500);
-		digitalWrite(LED_PIN, HIGH);
+	static int blink_delay = 500;
+
+	if (timeFromLastBlink > blinkInterval) {
+		digitalWrite(led_pin, HIGH);
+		delay(blink_delay);
+		digitalWrite(led_pin, LOW);
+		delay(blink_delay);
+		digitalWrite(led_pin, HIGH);
+		delay(blink_delay);
+		digitalWrite(led_pin, LOW);
+
 		timeFromLastBlink = 0;
 	}
 }
 
 int ssi_read_bit() {
-	digitalWrite(SSI_CLOCK_PIN, HIGH);
-	delayMicroseconds(20);
-	int bit = digitalRead(SSI_DATA_PIN);
-	delayMicroseconds(20);
-	digitalWrite(SSI_CLOCK_PIN, LOW);
-	delayMicroseconds(20);
+	int bit;
+
+	//digitalWrite(ssi_clk_pin, LOW);
+	//bit = digitalRead(ssi_data_pin);
+	//digitalWrite(ssi_clk_pin, HIGH);
+
+	digitalWrite(ssi_clk_pin, LOW);
+	delayMicroseconds(5);
+	digitalWrite(ssi_clk_pin, HIGH);
+	delayMicroseconds(5);
+	bit = digitalRead(ssi_data_pin);
 
 	return bit;
 }
 
-unsigned int ssi_read_encoder() {
+String ssi_read_encoder() {
 	unsigned long value = 0;
-	int i, turns, pos;
+	int i, turns, pos, bit;
 
-	digitalWrite(SSI_CLOCK_PIN, LOW);				// start clock sequence
-	delayMicroseconds(20);
-	for (i = 0; i < (TURN_BITS + POS_BITS); i++) {	// pump-out bits
-		value |= ssi_read_bit();
+	debug("SSI: ");
+	for (i = 0; i < (TOTAL_BITS); i++) {	// pump-out bits
+		bit = ssi_read_bit();
+		debug("bit[");
+		debug(TOTAL_BITS - i - 1);
+		debug("] ");
+		debugln(bit);
+		value |= bit;
 		value <<= 1;
 	}
-	digitalWrite(SSI_CLOCK_PIN, HIGH);				// end clock sequence
-	
-	pos = value & POS_MASK;
-	turns = (value >> POS_BITS) & TURN_MASK;
+	delayMicroseconds(20);
 
-	return (turns * MAX_POS) + pos;
+	pos = value & POS_MASK;
+	turns = (value >> 13) & TURN_MASK;
+
+	debug(", turns: ");
+	debug(turns);
+	debug(", pos: ");
+	debugln(pos);
+
+	return String((turns * MAX_POS) + pos);
+}
+
+//
+// From: https://www.posital.com/media/en/fraba/productfinder/posital/datasheet-ixarc-ocd-sx_1.pdf
+//
+// The encoder value will be set to 0 after the preset input was active
+// for 100 ms and changes to inactive again
+//
+void enc_set_to_zero() {
+	//digitalWrite(enc_preset_pin, HIGH);
+	//delay(120);
+	//digitalWrite(enc_preset_pin, LOW);
+}
+
+//
+// From: https://www.posital.com/media/en/fraba/productfinder/posital/datasheet-ixarc-ocd-sx_1.pdf
+//
+// 0 (open or GND) Increasing Values Turning Clockwise (Viewed from Flange Side)
+// 1 (4.5 V to VS) Decreasing Values Turning Clockwise(Viewed from Flange Side)
+//
+void enc_set_direction(bool ccw) {
+	//digitalWrite(enc_dir_pin, ccw);
+}
+
+String help() {
+	return String("<table>"
+		" <tr><th align='left'>Cmd</th><th align='left'>Arg</th><th align='left'>Desc</th></tr>"
+		" <tr><td>help</td><td/><td>shows this help<td></tr>"
+		" <tr><td>encoder</td><td/><td>gets the current encoder value</td></tr>"
+		" <tr><td>status</td><td/><td>prints \"ok\", if alive</td></tr>"
+		" <tr><td>version</td><td/><td>prints the software version</td></tr>"
+		" <tr><td>zero</td><td>?password=******</td><td>zeroes the encoder</td></tr>"
+		"</table>");
+}
+
+String make_http_reply(String req) {
+
+	String content, reply;
+
+	debugln("\n[Request - start]");
+	debug(req);
+	debugln("[Request - end]\n");
+
+	if (req.indexOf("GET /status HTTP/1.1") != -1) {
+		content = String("ok");
+	}
+	else if (req.indexOf("GET /encoder HTTP/1.1") != -1) {
+		content = ssi_read_encoder();
+	}
+	else if (req.indexOf("GET /zero?password=ne'Gev HTTP/1.1") != -1) {
+		enc_set_to_zero();
+		content = String("encoder zeroed");
+	}
+	else if (req.indexOf("GET /help HTTP/1.1") != -1) {
+		content = help();
+	}
+	else if (req.indexOf("GET /version HTTP/1.1") != -1) {
+		content = String(version);
+	}
+
+	if (content.length() != 0) {
+		content = String("\r\n"
+			"<!DOCTYPE HTML>\r\n"
+			"<html>") + content + String("</html>");
+
+		reply = String("HTTP/1.1 200 OK\r\n"
+			"Pragma: no-cache\r\n"
+			"Cache-Control: no-cache\r\n"
+			"Connection: close\r\n"
+			"Content-Type: text/html\r\n"
+			"Content-Length: ") + String(content.length()) + String("\r\n") +
+			content;
+	}
+	else
+		reply = String("HTTP/1.1 404 Not found");
+
+	debugln("\n[Reply - start]");
+	debugln(reply);
+	debugln("[Reply - end]\n");
+	return reply;
 }
 
 void loop()
 {
+	//ssi_read_encoder();
+	//return; 
 	blink();
 
 	WiFiClient client = server.available();
-	if (!client)
-		return;
+	
+	if (client)
+	{
+		debug("\n[Client connected ");
+		debug(client.remoteIP());
+		debug(":");
+		debug(client.remotePort());
+		debug("]\n");
 
+		String request;
+		while (client.connected())
+		{
+			// read line by line what the client (web browser) is requesting
+			if (client.available())
+			{
+				String line = client.readStringUntil('\r');
+				request += line;
 
+				// wait for end of client's request, that is marked with an empty line
+				if (line.length() == 1 && line[0] == '\n')
+				{
+					client.println(make_http_reply(request));
+					break;
+				}
+			}
+		}
+		delay(1); // give the web browser time to receive the data
 
-	while (!client.available())
-		delay(1);
-	String req = client.readStringUntil('\n');
-	String content = "";
-	client.flush();
-
-	debug(client.remoteIP());
-	debug(":");
-	debug(client.remotePort());
-	debug(" [");
-	debugln(req + "]");
-
-	String reply_head = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<!DOCTYPE HTML>\r\n<html>";
-	String reply_tail = "<html>";
-	int enc_value = 17;
-
-	if (req.indexOf("GET /status HTTP/1.1") != -1) {
-		client.println(reply_head + "ok" + reply_tail);
+				  // close the connection:
+		client.stop();
+		Serial.println("[Client disconnected]");
 	}
-	else if (req.indexOf("GET /encoder HTTP/1.1") != -1) {
-		client.print(reply_head);
-		client.print(enc_value);
-		client.println(reply_tail);
-	} else {
-		client.println("HTTP/1.1 404 Not found");
-	}
-	client.stop();
 }

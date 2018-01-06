@@ -10,8 +10,9 @@
 
 static const uint8_t ssi_data_pin = D2;		// ssi data
 static const uint8_t ssi_clk_pin = D3;		// ssi clk
-static const uint8_t led_pin = D4;			// i'm alive blinker
-static const uint8_t debug_pin = D5;		// if grounded, debug to serial port 
+static const uint8_t enc_preset_pin = D4;	// zeroes the encoder
+static const uint8_t led_pin = D5;			// i'm alive blinker
+static const uint8_t debug_pin = D6;		// if grounded, debug to serial port
 
 static const String version = "1.0";
 static int ssi_clock_width = 200;
@@ -163,44 +164,62 @@ void blink() {
 int ssi_read_bit() {
 	int bit;
 
-	//digitalWrite(ssi_clk_pin, LOW);
-	//bit = digitalRead(ssi_data_pin);
-	//digitalWrite(ssi_clk_pin, HIGH);
-
 	digitalWrite(ssi_clk_pin, LOW);
-	delayMicroseconds(5);
+	delayMicroseconds(100);
 	digitalWrite(ssi_clk_pin, HIGH);
-	delayMicroseconds(5);
+	delayMicroseconds(100);
 	bit = digitalRead(ssi_data_pin);
 
 	return bit;
 }
 
-String ssi_read_encoder() {
+unsigned long ssi_read() {
+	int i, bit;
 	unsigned long value = 0;
-	int i, turns, pos, bit;
 
-	debug("SSI: ");
 	for (i = 0; i < (TOTAL_BITS); i++) {	// pump-out bits
-		bit = ssi_read_bit();
-		debug("bit[");
-		debug(TOTAL_BITS - i - 1);
-		debug("] ");
-		debugln(bit);
+		digitalWrite(ssi_clk_pin, LOW);
+		delayMicroseconds(5);
+		digitalWrite(ssi_clk_pin, HIGH);
+		delayMicroseconds(5);
+		bit = digitalRead(ssi_data_pin);
 		value |= bit;
 		value <<= 1;
 	}
+
+	return value;
+}
+
+//
+// Performs an encoder multi-transmission (see https://www.posital.com/en/products/communication-interface/ssi/ssi-encoder.php).
+// The value is read twice, with a single clock cycle in-between.  If the two values do not match, they are thrown away.
+//
+String ssi_read_encoder() {
+	unsigned long value[2] = { 0, 0 },  v;
+	int i, turns, pos, bit;
+
+	do {
+		value[0] = ssi_read();				// read first value
+		digitalWrite(ssi_clk_pin, LOW);
+		delayMicroseconds(5);
+		digitalWrite(ssi_clk_pin, HIGH);
+		delayMicroseconds(5);
+		value[1] = ssi_read();				// read second value
+		if (value[0] != value[1]) {
+			debug("mismatch: ");
+			debug(value[0]);
+			debug(" != ");
+			debugln(value[1]);
+		}
+	} while (value[0] != value[1]);
 	delayMicroseconds(20);
 
-	pos = value & POS_MASK;
-	turns = (value >> 13) & TURN_MASK;
+	pos = value[0] & POS_MASK;
+	turns = (value[0] >> 13) & TURN_MASK;
 
-	debug(", turns: ");
-	debug(turns);
-	debug(", pos: ");
-	debugln(pos);
-
-	return String((turns * MAX_POS) + pos);
+	v = (turns * MAX_POS) + pos;
+	debugln(v);
+	return String(v);
 }
 
 //
@@ -210,19 +229,9 @@ String ssi_read_encoder() {
 // for 100 ms and changes to inactive again
 //
 void enc_set_to_zero() {
-	//digitalWrite(enc_preset_pin, HIGH);
-	//delay(120);
-	//digitalWrite(enc_preset_pin, LOW);
-}
-
-//
-// From: https://www.posital.com/media/en/fraba/productfinder/posital/datasheet-ixarc-ocd-sx_1.pdf
-//
-// 0 (open or GND) Increasing Values Turning Clockwise (Viewed from Flange Side)
-// 1 (4.5 V to VS) Decreasing Values Turning Clockwise(Viewed from Flange Side)
-//
-void enc_set_direction(bool ccw) {
-	//digitalWrite(enc_dir_pin, ccw);
+	digitalWrite(enc_preset_pin, HIGH);
+	delay(120);
+	digitalWrite(enc_preset_pin, LOW);
 }
 
 String help() {
@@ -285,9 +294,11 @@ String make_http_reply(String req) {
 
 void loop()
 {
-	//ssi_read_encoder();
-	//return; 
-	blink();
+	//blink();
+	ssi_read_encoder();
+	//delay(1000);
+	return;
+
 
 	WiFiClient client = server.available();
 	

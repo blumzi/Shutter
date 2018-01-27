@@ -15,7 +15,6 @@ static const uint8_t led_pin = D5;			// i'm alive blinker
 static const uint8_t debug_pin = D6;		// if grounded, debug to serial port
 
 static const String version = "1.0";
-static int ssi_clock_width = 200;
 
 #define POS_BITS		12
 #define POS_MASK		((1 << POS_BITS) - 1)
@@ -64,6 +63,9 @@ void setup()
 	pinMode(led_pin, OUTPUT);
 	digitalWrite(led_pin, HIGH);
 
+	pinMode(enc_preset_pin, OUTPUT);
+	digitalWrite(enc_preset_pin, LOW);
+
 	pinMode(debug_pin, INPUT_PULLUP);
 
 	debugbegin(9600);
@@ -96,7 +98,7 @@ void ConnectToWifiNetwork() {
 
 	nDetected = WiFi.scanNetworks();
 	debug("Detected ");
-	debug(nNetworks);
+	debug(nDetected);
 	debugln(" networks");
 
 	for (n = 0; n < nDetected; n++) {
@@ -146,48 +148,71 @@ void ConnectToWifiNetwork() {
 }
 
 void blink() {
-	static int blink_delay = 500;
+	static unsigned int blink_delay = 500;
+	static unsigned int intervals[] = {
+		blinkInterval,						// 0: go high
+		blinkInterval + blink_delay,		// 1: go low
+		blinkInterval + 2 * blink_delay,	// 2: go high
+		blinkInterval + 3 * blink_delay,	// 3: go low and reset
+	};
+	static int counter = 0;
+	static int state = LOW;
 
-	if (timeFromLastBlink > blinkInterval) {
-		digitalWrite(led_pin, HIGH);
-		delay(blink_delay);
-		digitalWrite(led_pin, LOW);
-		delay(blink_delay);
-		digitalWrite(led_pin, HIGH);
-		delay(blink_delay);
-		digitalWrite(led_pin, LOW);
-
-		timeFromLastBlink = 0;
+	if (timeFromLastBlink > intervals[counter]) {
+		state ^= 1;
+		digitalWrite(led_pin, state);
+		counter++;
+		if (counter == 4) {
+			counter = 0;
+			timeFromLastBlink = 0;
+		}
 	}
+
+	//if (timeFromLastBlink > blinkInterval) {
+	//	digitalWrite(led_pin, HIGH);
+	//	delay(blink_delay);
+	//	digitalWrite(led_pin, LOW);
+	//	delay(blink_delay);
+	//	digitalWrite(led_pin, HIGH);
+	//	delay(blink_delay);
+	//	digitalWrite(led_pin, LOW);
+
+	//	timeFromLastBlink = 0;
+	//}
 }
 
 int ssi_read_bit() {
 	int bit;
 
 	digitalWrite(ssi_clk_pin, LOW);
-	delayMicroseconds(100);
+	//delayMicroseconds(5);
 	digitalWrite(ssi_clk_pin, HIGH);
-	delayMicroseconds(100);
+	//delayMicroseconds(5);
 	bit = digitalRead(ssi_data_pin);
 
 	return bit;
 }
 
-unsigned long ssi_read() {
+unsigned long ssi_read_single() {
 	int i, bit;
 	unsigned long value = 0;
 
 	for (i = 0; i < (TOTAL_BITS); i++) {	// pump-out bits
-		digitalWrite(ssi_clk_pin, LOW);
-		delayMicroseconds(5);
-		digitalWrite(ssi_clk_pin, HIGH);
-		delayMicroseconds(5);
-		bit = digitalRead(ssi_data_pin);
+		bit = ssi_read_bit();
 		value |= bit;
 		value <<= 1;
-	}
-
+	}	
 	return value;
+}
+
+void debug_single(unsigned long value) {
+	String *s = new String();
+
+	for (int i = TOTAL_BITS - 1; i >= 0; i--) {
+		*s += (value & (1 << i)) ? "1" : "0";
+	}
+	debugln(*s);
+	delete s;
 }
 
 //
@@ -196,15 +221,19 @@ unsigned long ssi_read() {
 //
 String ssi_read_encoder() {
 	unsigned long value[2] = { 0, 0 },  v;
-	int i, turns, pos, bit;
+	int turns, pos;
 
 	do {
-		value[0] = ssi_read();				// read first value
+		value[0] = ssi_read_single();				// read first value
 		digitalWrite(ssi_clk_pin, LOW);
 		delayMicroseconds(5);
 		digitalWrite(ssi_clk_pin, HIGH);
 		delayMicroseconds(5);
-		value[1] = ssi_read();				// read second value
+		value[1] = ssi_read_single();				// read second value
+
+		debug_single(value[0]);
+		debug_single(value[1]);
+
 		if (value[0] != value[1]) {
 			debug("mismatch: ");
 			debug(value[0]);
@@ -218,6 +247,11 @@ String ssi_read_encoder() {
 	turns = (value[0] >> 13) & TURN_MASK;
 
 	v = (turns * MAX_POS) + pos;
+	debug("turns: ");
+	debug(turns);
+	debug(", pos: ");
+	debug(pos);
+	debug(" => ");
 	debugln(v);
 	return String(v);
 }
@@ -259,7 +293,7 @@ String make_http_reply(String req) {
 	else if (req.indexOf("GET /encoder HTTP/1.1") != -1) {
 		content = ssi_read_encoder();
 	}
-	else if (req.indexOf("GET /zero?password=ne'Gev HTTP/1.1") != -1) {
+	else if (req.indexOf("GET /zero?password=ne%27Gev HTTP/1.1") != -1) {
 		enc_set_to_zero();
 		content = String("encoder zeroed");
 	}
@@ -294,11 +328,7 @@ String make_http_reply(String req) {
 
 void loop()
 {
-	//blink();
-	ssi_read_encoder();
-	//delay(1000);
-	return;
-
+	blink();
 
 	WiFiClient client = server.available();
 	

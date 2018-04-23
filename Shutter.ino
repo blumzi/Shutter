@@ -10,11 +10,12 @@
 
 static const uint8_t ssi_data_pin = D2;		// ssi data
 static const uint8_t ssi_clk_pin = D3;		// ssi clk
-static const uint8_t enc_preset_pin = D4;	// zeroes the encoder
-static const uint8_t led_pin = D5;			// i'm alive blinker
+static const uint8_t enc_preset_pin = D7;	// zeroes the encoder
+static const uint8_t led_pin = D5;			// i'm alive LED
 static const uint8_t debug_pin = D6;		// if grounded, debug to serial port
 
 static const String version = "1.0";
+bool serialWasInitialized = false;
 
 #define POS_BITS		12
 #define POS_MASK		((1 << POS_BITS) - 1)
@@ -25,32 +26,42 @@ static const String version = "1.0";
 
 #define DEBUG
 #ifdef DEBUG
-#define debug(...)		debugging() && Serial.print(__VA_ARGS__)
-#define debugln(...)	debugging() && Serial.println(__VA_ARGS__)
-#define debugbegin(x)	Serial.begin(x)
+#define debug(...)		if (debugging()) Serial.print(__VA_ARGS__)
+#define debugln(...)	if (debugging()) Serial.println(__VA_ARGS__)
 #else
 #define	debug(...)
 #define debugln(...)
-#define debugbegin(x)
 #endif // DEBUG
 
-unsigned int blinkInterval = 5000;
-elapsedMillis timeFromLastBlink = 0;
+unsigned int lookAliveInterval = 5000;
+elapsedMillis timeFromLastlookAlive = 0;
+elapsedMillis timeFromStartZeroing = 0;
+bool zeroing = false;
 
 struct knownNetwork {
 	const char* ssid;
 	const char* password;
 } knownNetworks[] = {
-	{ "TheBlumz", "gandalph1",},
-	{ "TheBlumz5", "gandalph1", },
-	{ "wo", "",},
+	{ "wo", "", },
+	{ "TheBlumz", "***",},
 };
-const int nNetworks = sizeof(knownNetworks) / sizeof(struct knownNetwork);
+const int nKnownNetworks = sizeof(knownNetworks) / sizeof(struct knownNetwork);
 
 WiFiServer server(80);
 
+//
+// Returns true if the debug_pin has been grounded
+//
 bool debugging() {
-	return digitalRead(debug_pin) == 0;
+	if (digitalRead(debug_pin) != 0)	// the debug_pin must be grounded for DEBUG mode
+		return false;
+
+	if (!serialWasInitialized) {
+		Serial.begin(9600);
+		serialWasInitialized = true;
+	}
+
+	return true;
 }
 
 void setup()
@@ -68,12 +79,9 @@ void setup()
 
 	pinMode(debug_pin, INPUT_PULLUP);
 
-	debugbegin(9600);
 	debugln("\nWise40 Dome Shutter Server.");
 
-	WiFi.mode(WIFI_STA);
-	delay(500);
-	ConnectToWifiNetwork();
+	connectWifi();
 
 	server.begin();
 	debugln("Server started.");
@@ -91,15 +99,22 @@ String enc_type(uint8_t t) {
 	}
 }
 
-void ConnectToWifiNetwork() {
+void connectWifi() {
 	int n, nDetected;
 	struct knownNetwork *kp;
 	bool connected = false;
 
-	nDetected = WiFi.scanNetworks();
-	debug("Detected ");
-	debug(nDetected);
-	debugln(" networks");
+	nDetected = 0;
+	do {
+		debugln("Detecting networks ...");
+		WiFi.mode(WIFI_STA);
+		WiFi.disconnect();
+		delay(500);
+		nDetected = WiFi.scanNetworks();
+		debug("Detected ");
+		debug(nDetected);
+		debugln(" networks");
+	} while (nDetected == 0);
 
 	for (n = 0; n < nDetected; n++) {
 		debug("SSID: \"");
@@ -109,9 +124,10 @@ void ConnectToWifiNetwork() {
 		debug(" dB, Enc: ");
 		debugln(enc_type(WiFi.encryptionType(n)));
 	}
+	debugln("");
 
 	for (n = 0; n < nDetected; n++) {
-		for (kp = &knownNetworks[0]; !connected && (kp - knownNetworks < nNetworks); kp++) {
+		for (kp = &knownNetworks[0]; !connected && (kp - knownNetworks < nKnownNetworks); kp++) {
 			int attempts, attempt;
 
 			for (attempts = 5, attempt = 0; attempt < attempts; attempt++) {
@@ -133,10 +149,13 @@ void ConnectToWifiNetwork() {
 				}
 
 				if (WiFi.status() == WL_CONNECTED) {
+					debugln("");
 					debug(" Connected to \"");
 					debug(kp->ssid);
 					debug("\" as ");
-					debugln(WiFi.localIP());
+					debug(WiFi.localIP());
+					debug(", MAC: ");
+					debugln(WiFi.macAddress());
 					connected = true;
 					break;
 				}
@@ -147,57 +166,52 @@ void ConnectToWifiNetwork() {
 	}
 }
 
-void blink() {
-	static unsigned int blink_delay = 500;
+void blink(int nblinks) {
+	static int interval = 400;
+
+	for (int i = 0; i < nblinks; i++) {
+		digitalWrite(led_pin, HIGH);
+		delayMicroseconds(interval);
+		digitalWrite(led_pin, LOW);
+		delayMicroseconds(interval);
+	}
+}
+
+void lookAlive() {
+	static unsigned int lookAlive_delay = 500;
 	static unsigned int intervals[] = {
-		blinkInterval,						// 0: go high
-		blinkInterval + blink_delay,		// 1: go low
-		blinkInterval + 2 * blink_delay,	// 2: go high
-		blinkInterval + 3 * blink_delay,	// 3: go low and reset
+		lookAliveInterval + 0 * lookAlive_delay,	// 0: go high
+		lookAliveInterval + 1 * lookAlive_delay,	// 1: go low
+		lookAliveInterval + 2 * lookAlive_delay,	// 2: go high
+		lookAliveInterval + 3 * lookAlive_delay,	// 3: go low and reset
 	};
 	static int counter = 0;
 	static int state = LOW;
 
-	if (timeFromLastBlink > intervals[counter]) {
+	if (timeFromLastlookAlive > intervals[counter]) {
 		state ^= 1;
 		digitalWrite(led_pin, state);
 		counter++;
 		if (counter == 4) {
 			counter = 0;
-			timeFromLastBlink = 0;
+			timeFromLastlookAlive = 0;
 		}
 	}
-
-	//if (timeFromLastBlink > blinkInterval) {
-	//	digitalWrite(led_pin, HIGH);
-	//	delay(blink_delay);
-	//	digitalWrite(led_pin, LOW);
-	//	delay(blink_delay);
-	//	digitalWrite(led_pin, HIGH);
-	//	delay(blink_delay);
-	//	digitalWrite(led_pin, LOW);
-
-	//	timeFromLastBlink = 0;
-	//}
 }
 
 int ssi_read_bit() {
-	int bit;
-
 	digitalWrite(ssi_clk_pin, LOW);
-	//delayMicroseconds(5);
+	delayMicroseconds(6);
 	digitalWrite(ssi_clk_pin, HIGH);
-	//delayMicroseconds(5);
-	bit = digitalRead(ssi_data_pin);
-
-	return bit;
+	delayMicroseconds(5);
+	return digitalRead(ssi_data_pin);
 }
 
 unsigned long ssi_read_single() {
 	int i, bit;
 	unsigned long value = 0;
 
-	for (i = 0; i < (TOTAL_BITS); i++) {	// pump-out bits
+	for (i = 0; i < TOTAL_BITS; i++) {	// pump-out bits
 		bit = ssi_read_bit();
 		value |= bit;
 		value <<= 1;
@@ -231,17 +245,18 @@ String ssi_read_encoder() {
 		delayMicroseconds(5);
 		value[1] = ssi_read_single();				// read second value
 
-		debug_single(value[0]);
-		debug_single(value[1]);
-
 		if (value[0] != value[1]) {
 			debug("mismatch: ");
 			debug(value[0]);
 			debug(" != ");
 			debugln(value[1]);
-		}
+		} else
+			debug_single(value[0]);
+
 	} while (value[0] != value[1]);
-	delayMicroseconds(20);
+
+	digitalWrite(ssi_clk_pin, HIGH);
+	delayMicroseconds(25);
 
 	pos = value[0] & POS_MASK;
 	turns = (value[0] >> 13) & TURN_MASK;
@@ -256,17 +271,6 @@ String ssi_read_encoder() {
 	return String(v);
 }
 
-//
-// From: https://www.posital.com/media/en/fraba/productfinder/posital/datasheet-ixarc-ocd-sx_1.pdf
-//
-// The encoder value will be set to 0 after the preset input was active
-// for 100 ms and changes to inactive again
-//
-void enc_set_to_zero() {
-	digitalWrite(enc_preset_pin, HIGH);
-	delay(120);
-	digitalWrite(enc_preset_pin, LOW);
-}
 
 String help() {
 	return String("<table>"
@@ -294,7 +298,9 @@ String make_http_reply(String req) {
 		content = ssi_read_encoder();
 	}
 	else if (req.indexOf("GET /zero?password=ne%27Gev HTTP/1.1") != -1) {
-		enc_set_to_zero();
+		zeroing = true;
+		digitalWrite(enc_preset_pin, HIGH);
+		timeFromStartZeroing = 0;
 		content = String("encoder zeroed");
 	}
 	else if (req.indexOf("GET /help HTTP/1.1") != -1) {
@@ -326,16 +332,30 @@ String make_http_reply(String req) {
 	return reply;
 }
 
+
+
+WiFiClient zeroingClient;
+
 void loop()
 {
-	blink();
+	lookAlive();
 
-	WiFiClient client = server.available();
-	
+	if (zeroing && timeFromStartZeroing >= 120) {
+		//
+		// From: https://www.posital.com/media/en/fraba/productfinder/posital/datasheet-ixarc-ocd-sx_1.pdf
+		//
+		// The encoder value will be set to 0 after the preset input was active
+		// for 100 ms and changes to inactive again
+		//
+		digitalWrite(enc_preset_pin, LOW);
+		zeroing = false;
+	}
+
+	WiFiClient client = server.available();	
 	if (client)
 	{
 		debug("\n[Client connected ");
-		debug(client.remoteIP());
+		debug(client.remoteIP());     
 		debug(":");
 		debug(client.remotePort());
 		debug("]\n");
@@ -361,6 +381,7 @@ void loop()
 
 				  // close the connection:
 		client.stop();
-		Serial.println("[Client disconnected]");
+		debugln("[Client disconnected]");
+		blink(3);
 	}
 }

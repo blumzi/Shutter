@@ -75,6 +75,8 @@
     <ProjectCapability Include="VisualMicro" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="Documents\AbsoluteEncoders_Context_Technology_SSI_AppNote.pdf" />
+    <None Include="Documents\datasheet-ixarc-ocd-sx_1.pdf" />
     <None Include="Shutter.ino">
       <FileType>CppCode</FileType>
     </None>

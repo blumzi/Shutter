@@ -16,6 +16,8 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="Shutter.ino" />
+    <None Include="Documents\AbsoluteEncoders_Context_Technology_SSI_AppNote.pdf" />
+    <None Include="Documents\datasheet-ixarc-ocd-sx_1.pdf" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="__vm\.Shutter.vsarduino.h">

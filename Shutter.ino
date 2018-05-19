@@ -39,11 +39,13 @@ elapsedMillis timeFromStartZeroing = 0;
 bool zeroing = false;
 
 struct knownNetwork {
-	const char* ssid;
-	const char* password;
+  const char* ssid;
+  const char* password;
 } knownNetworks[] = {
-	{ "wo", "", },
-	{ "TheBlumz", "***",},
+  { "wo", "", },
+  { "TheBlumz", "***",},
+  { "brutus", "negev2008" },
+  { "Free-TAU", "Free-TAU" },
 };
 const int nKnownNetworks = sizeof(knownNetworks) / sizeof(struct knownNetwork);
 
@@ -53,180 +55,176 @@ WiFiServer server(80);
 // Returns true if the debug_pin has been grounded
 //
 bool debugging() {
-	if (digitalRead(debug_pin) != 0)	// the debug_pin must be grounded for DEBUG mode
-		return false;
+  if (digitalRead(debug_pin) != 0)	// the debug_pin must be grounded for DEBUG mode
+    return false;
 
-	if (!serialWasInitialized) {
-		Serial.begin(9600);
-		serialWasInitialized = true;
-	}
+  if (!serialWasInitialized) {
+    Serial.begin(9600);
+    serialWasInitialized = true;
+  }
 
-	return true;
+  return true;
 }
 
 void setup()
 {
-	pinMode(ssi_clk_pin, OUTPUT);
-	digitalWrite(ssi_clk_pin, HIGH);
+  pinMode(ssi_clk_pin, OUTPUT);
+  digitalWrite(ssi_clk_pin, HIGH);
 
-	pinMode(ssi_data_pin, INPUT);
+  pinMode(ssi_data_pin, INPUT);
 
-	pinMode(led_pin, OUTPUT);
-	digitalWrite(led_pin, HIGH);
+  pinMode(led_pin, OUTPUT);
+  digitalWrite(led_pin, HIGH);
 
-	pinMode(enc_preset_pin, OUTPUT);
-	digitalWrite(enc_preset_pin, LOW);
+  pinMode(enc_preset_pin, OUTPUT);
+  digitalWrite(enc_preset_pin, LOW);
 
-	pinMode(debug_pin, INPUT_PULLUP);
+  pinMode(debug_pin, INPUT_PULLUP);
 
-	debugln("\nWise40 Dome Shutter Server.");
+  debugln("\nWise40 Dome Shutter Server.");
 
-	connectWifi();
+  connectWifi();
 
-	server.begin();
-	debugln("Server started.");
-	digitalWrite(led_pin, LOW);
+  server.begin();
+  debugln("Server started.");
+  digitalWrite(led_pin, LOW);
 }
 
 String enc_type(uint8_t t) {
-	switch (t) {
-	case ENC_TYPE_WEP:	return "WEP";
-	case ENC_TYPE_TKIP:	return "TKIP(WPA)";
-	case ENC_TYPE_CCMP:	return "CCMP(WPA)";
-	case ENC_TYPE_NONE:	return "NONE";
-	case ENC_TYPE_AUTO:	return "AUTO";
-	default:			return "Unknown";
-	}
+  switch (t) {
+    case ENC_TYPE_WEP:	return "WEP";
+    case ENC_TYPE_TKIP:	return "TKIP(WPA)";
+    case ENC_TYPE_CCMP:	return "CCMP(WPA)";
+    case ENC_TYPE_NONE:	return "NONE";
+    case ENC_TYPE_AUTO:	return "AUTO";
+    default:			return "Unknown";
+  }
 }
 
 void connectWifi() {
-	int n, nDetected;
-	struct knownNetwork *kp;
-	bool connected = false;
+  int n, nDetected;
+  struct knownNetwork *kp;
+  bool connected = false;
 
-	nDetected = 0;
-	do {
-		debugln("Detecting networks ...");
-		WiFi.mode(WIFI_STA);
-		WiFi.disconnect();
-		delay(500);
-		nDetected = WiFi.scanNetworks();
-		debug("Detected ");
-		debug(nDetected);
-		debugln(" networks");
-	} while (nDetected == 0);
+  nDetected = 0;
+  do {
+    debugln("Detecting networks ...");
+    WiFi.mode(WIFI_STA);
+    WiFi.disconnect();
+    delay(500);
+    nDetected = WiFi.scanNetworks();
+    debug("Detected ");
+    debug(nDetected);
+    debugln(" networks");
+  } while (nDetected == 0);
 
-	for (n = 0; n < nDetected; n++) {
-		debug("SSID: \"");
-		debug(WiFi.SSID(n));
-		debug("\", RSSI: ");
-		debug(WiFi.RSSI(n));
-		debug(" dB, Enc: ");
-		debugln(enc_type(WiFi.encryptionType(n)));
-	}
-	debugln("");
+  for (n = 0; n < nDetected; n++) {
+    debug("SSID: \"");
+    debug(WiFi.SSID(n));
+    debug("\", RSSI: ");
+    debug(WiFi.RSSI(n));
+    debug(" dB, Enc: ");
+    debugln(enc_type(WiFi.encryptionType(n)));
+  }
+  debugln("");
 
-	for (n = 0; n < nDetected; n++) {
-		for (kp = &knownNetworks[0]; !connected && (kp - knownNetworks < nKnownNetworks); kp++) {
-			int attempts, attempt;
+  for (kp = &knownNetworks[0]; !connected && (kp - knownNetworks < nKnownNetworks); kp++) {
+    int attempts, attempt;
 
-			for (attempts = 5, attempt = 0; attempt < attempts; attempt++) {
-				if (WiFi.SSID(n) == kp->ssid) {
-					const char *passwd = (WiFi.encryptionType(n) == ENC_TYPE_NONE) ? "" : kp->password;
-					debug("Attempting to connect to \"");
-					debug(kp->ssid);
-					debug("\", passwd: \"");
-					debug(passwd);
-					debug("\" attempt #");
-					debug(attempt);
-					debug(" ... ");
-					WiFi.begin(kp->ssid, passwd);
-					elapsedMillis timeFromConnect = 0;
-					while ((WiFi.status() != WL_CONNECTED) && timeFromConnect < 10000) {
-						delay(100);
-						debug(".");
-					}
-				}
+    for (attempts = 5, attempt = 0; attempt < attempts; attempt++) {
+      const char *passwd = (WiFi.encryptionType(n) == ENC_TYPE_NONE) ? "" : kp->password;
+      debug("\nAttempting to connect to \"");
+      debug(kp->ssid);
+      debug("\", passwd: \"");
+      debug(passwd);
+      debug("\" attempt #");
+      debug(attempt);
+      debug(" ");
+      WiFi.begin(kp->ssid, passwd);
+      elapsedMillis timeFromConnect = 0;
+      while ((WiFi.status() != WL_CONNECTED) && timeFromConnect < 10000) {
+        delay(100);
+        debug(".");
+      }
 
-				if (WiFi.status() == WL_CONNECTED) {
-					debugln("");
-					debug(" Connected to \"");
-					debug(kp->ssid);
-					debug("\" as ");
-					debug(WiFi.localIP());
-					debug(", MAC: ");
-					debugln(WiFi.macAddress());
-					connected = true;
-					break;
-				}
-				else
-					WiFi.disconnect();
-			}
-		}
-	}
+      if (WiFi.status() == WL_CONNECTED) {
+        debugln("");
+        debug(" Connected to \"");
+        debug(kp->ssid);
+        debug("\" as ");
+        debug(WiFi.localIP());
+        debug(", MAC: ");
+        debugln(WiFi.macAddress());
+        connected = true;
+        break;
+      }
+      else
+        WiFi.disconnect();
+    }
+  }
 }
 
 void blink(int nblinks) {
-	static int interval = 400;
+  static int interval = 400;
 
-	for (int i = 0; i < nblinks; i++) {
-		digitalWrite(led_pin, HIGH);
-		delayMicroseconds(interval);
-		digitalWrite(led_pin, LOW);
-		delayMicroseconds(interval);
-	}
+  for (int i = 0; i < nblinks; i++) {
+    digitalWrite(led_pin, HIGH);
+    delayMicroseconds(interval);
+    digitalWrite(led_pin, LOW);
+    delayMicroseconds(interval);
+  }
 }
 
 void lookAlive() {
-	static unsigned int lookAlive_delay = 500;
-	static unsigned int intervals[] = {
-		lookAliveInterval + 0 * lookAlive_delay,	// 0: go high
-		lookAliveInterval + 1 * lookAlive_delay,	// 1: go low
-		lookAliveInterval + 2 * lookAlive_delay,	// 2: go high
-		lookAliveInterval + 3 * lookAlive_delay,	// 3: go low and reset
-	};
-	static int counter = 0;
-	static int state = LOW;
+  static unsigned int lookAlive_delay = 500;
+  static unsigned int intervals[] = {
+    lookAliveInterval + 0 * lookAlive_delay,	// 0: go high
+    lookAliveInterval + 1 * lookAlive_delay,	// 1: go low
+    lookAliveInterval + 2 * lookAlive_delay,	// 2: go high
+    lookAliveInterval + 3 * lookAlive_delay,	// 3: go low and reset
+  };
+  static int counter = 0;
+  static int state = LOW;
 
-	if (timeFromLastlookAlive > intervals[counter]) {
-		state ^= 1;
-		digitalWrite(led_pin, state);
-		counter++;
-		if (counter == 4) {
-			counter = 0;
-			timeFromLastlookAlive = 0;
-		}
-	}
+  if (timeFromLastlookAlive > intervals[counter]) {
+    state ^= 1;
+    digitalWrite(led_pin, state);
+    counter++;
+    if (counter == 4) {
+      counter = 0;
+      timeFromLastlookAlive = 0;
+    }
+  }
 }
 
 int ssi_read_bit() {
-	digitalWrite(ssi_clk_pin, LOW);
-	delayMicroseconds(6);
-	digitalWrite(ssi_clk_pin, HIGH);
-	delayMicroseconds(5);
-	return digitalRead(ssi_data_pin);
+  digitalWrite(ssi_clk_pin, LOW);
+  delayMicroseconds(6);
+  digitalWrite(ssi_clk_pin, HIGH);
+  delayMicroseconds(5);
+  return digitalRead(ssi_data_pin);
 }
 
 unsigned long ssi_read_single() {
-	int i, bit;
-	unsigned long value = 0;
+  int i, bit;
+  unsigned long value = 0;
 
-	for (i = 0; i < TOTAL_BITS; i++) {	// pump-out bits
-		bit = ssi_read_bit();
-		value |= bit;
-		value <<= 1;
-	}	
-	return value;
+  for (i = 0; i < TOTAL_BITS; i++) {	// pump-out bits
+    bit = ssi_read_bit();
+    value |= bit;
+    value <<= 1;
+  }
+  return value;
 }
 
 void debug_single(unsigned long value) {
-	String *s = new String();
+  String *s = new String();
 
-	for (int i = TOTAL_BITS - 1; i >= 0; i--) {
-		*s += (value & (1 << i)) ? "1" : "0";
-	}
-	debugln(*s);
-	delete s;
+  for (int i = TOTAL_BITS - 1; i >= 0; i--) {
+    *s += (value & (1 << i)) ? "1" : "0";
+  }
+  debugln(*s);
+  delete s;
 }
 
 //
@@ -234,102 +232,102 @@ void debug_single(unsigned long value) {
 // The value is read twice, with a single clock cycle in-between.  If the two values do not match, they are thrown away.
 //
 String ssi_read_encoder() {
-	unsigned long value[2] = { 0, 0 },  v;
-	int turns, pos;
+  unsigned long value[2] = { 0, 0 },  v;
+  int turns, pos;
 
-	do {
-		value[0] = ssi_read_single();				// read first value
-		digitalWrite(ssi_clk_pin, LOW);
-		delayMicroseconds(5);
-		digitalWrite(ssi_clk_pin, HIGH);
-		delayMicroseconds(5);
-		value[1] = ssi_read_single();				// read second value
+  do {
+    value[0] = ssi_read_single();				// read first value
+    digitalWrite(ssi_clk_pin, LOW);
+    delayMicroseconds(5);
+    digitalWrite(ssi_clk_pin, HIGH);
+    delayMicroseconds(5);
+    value[1] = ssi_read_single();				// read second value
 
-		if (value[0] != value[1]) {
-			debug("mismatch: ");
-			debug(value[0]);
-			debug(" != ");
-			debugln(value[1]);
-		} else
-			debug_single(value[0]);
+    if (value[0] != value[1]) {
+      debug("mismatch: ");
+      debug(value[0]);
+      debug(" != ");
+      debugln(value[1]);
+    } else
+      debug_single(value[0]);
 
-	} while (value[0] != value[1]);
+  } while (value[0] != value[1]);
 
-	digitalWrite(ssi_clk_pin, HIGH);
-	delayMicroseconds(25);
+  digitalWrite(ssi_clk_pin, HIGH);
+  delayMicroseconds(25);
 
-	pos = value[0] & POS_MASK;
-	turns = (value[0] >> 13) & TURN_MASK;
+  pos = value[0] & POS_MASK;
+  turns = (value[0] >> 13) & TURN_MASK;
 
-	v = (turns * MAX_POS) + pos;
-	debug("turns: ");
-	debug(turns);
-	debug(", pos: ");
-	debug(pos);
-	debug(" => ");
-	debugln(v);
-	return String(v);
+  v = (turns * MAX_POS) + pos;
+  debug("turns: ");
+  debug(turns);
+  debug(", pos: ");
+  debug(pos);
+  debug(" => ");
+  debugln(v);
+  return String(v);
 }
 
 
 String help() {
-	return String("<table>"
-		" <tr><th align='left'>Cmd</th><th align='left'>Arg</th><th align='left'>Desc</th></tr>"
-		" <tr><td>help</td><td/><td>shows this help<td></tr>"
-		" <tr><td>encoder</td><td/><td>gets the current encoder value</td></tr>"
-		" <tr><td>status</td><td/><td>prints \"ok\", if alive</td></tr>"
-		" <tr><td>version</td><td/><td>prints the software version</td></tr>"
-		" <tr><td>zero</td><td>?password=******</td><td>zeroes the encoder</td></tr>"
-		"</table>");
+  return String("<table>"
+                " <tr><th align='left'>Cmd</th><th align='left'>Arg</th><th align='left'>Desc</th></tr>"
+                " <tr><td>help</td><td/><td>shows this help<td></tr>"
+                " <tr><td>encoder</td><td/><td>gets the current encoder value</td></tr>"
+                " <tr><td>status</td><td/><td>prints \"ok\", if alive</td></tr>"
+                " <tr><td>version</td><td/><td>prints the software version</td></tr>"
+                " <tr><td>zero</td><td>?password=******</td><td>zeroes the encoder</td></tr>"
+                "</table>");
 }
 
 String make_http_reply(String req) {
 
-	String content, reply;
+  String content, reply;
 
-	debugln("\n[Request - start]");
-	debug(req);
-	debugln("[Request - end]\n");
+  debugln("\n[Request - start]");
+  debug(req);
+  debugln("[Request - end]\n");
 
-	if (req.indexOf("GET /status HTTP/1.1") != -1) {
-		content = String("ok");
-	}
-	else if (req.indexOf("GET /encoder HTTP/1.1") != -1) {
-		content = ssi_read_encoder();
-	}
-	else if (req.indexOf("GET /zero?password=ne%27Gev HTTP/1.1") != -1) {
-		zeroing = true;
-		digitalWrite(enc_preset_pin, HIGH);
-		timeFromStartZeroing = 0;
-		content = String("encoder zeroed");
-	}
-	else if (req.indexOf("GET /help HTTP/1.1") != -1) {
-		content = help();
-	}
-	else if (req.indexOf("GET /version HTTP/1.1") != -1) {
-		content = String(version);
-	}
+  if (req.indexOf("GET /status HTTP/1.1") != -1) {
+    content = String("ok");
+  }
+  else if (req.indexOf("GET /encoder HTTP/1.1") != -1) {
+    content = ssi_read_encoder();
+  }
+  else if (req.indexOf("GET /zero?password=ne%27Gev HTTP/1.1") != -1) {
+    zeroing = true;
+    digitalWrite(enc_preset_pin, HIGH);
+    timeFromStartZeroing = 0;
+    content = String("encoder zeroed");
+  }
+  else if (req.indexOf("GET /help HTTP/1.1") != -1) {
+    content = help();
+  }
+  else if (req.indexOf("GET /version HTTP/1.1") != -1) {
+    content = String(version);
+  }
 
-	if (content.length() != 0) {
-		content = String("\r\n"
-			"<!DOCTYPE HTML>\r\n"
-			"<html>") + content + String("</html>");
+  if (content.length() != 0) {
+    content = String("\r\n"
+                     "<!DOCTYPE HTML>\r\n"
+                     "<html>") + content + String("</html>");
 
-		reply = String("HTTP/1.1 200 OK\r\n"
-			"Pragma: no-cache\r\n"
-			"Cache-Control: no-cache\r\n"
-			"Connection: close\r\n"
-			"Content-Type: text/html\r\n"
-			"Content-Length: ") + String(content.length()) + String("\r\n") +
-			content;
-	}
-	else
-		reply = String("HTTP/1.1 404 Not found");
+    reply = String("HTTP/1.1 200 OK\r\n"
+                   "Pragma: no-cache\r\n"
+                   "Cache-Control: no-cache\r\n"
+                   "Connection: close\r\n"
+                   "Content-Type: text/html\r\n"
+                   "Content-Length: ") + String(content.length()) + String("\r\n") +
+            content;
+  }
+  else
+    reply = String("HTTP/1.1 404 Not found");
 
-	debugln("\n[Reply - start]");
-	debugln(reply);
-	debugln("[Reply - end]\n");
-	return reply;
+  debugln("\n[Reply - start]");
+  debugln(reply);
+  debugln("[Reply - end]\n");
+  return reply;
 }
 
 
@@ -338,50 +336,50 @@ WiFiClient zeroingClient;
 
 void loop()
 {
-	lookAlive();
+  lookAlive();
 
-	if (zeroing && timeFromStartZeroing >= 120) {
-		//
-		// From: https://www.posital.com/media/en/fraba/productfinder/posital/datasheet-ixarc-ocd-sx_1.pdf
-		//
-		// The encoder value will be set to 0 after the preset input was active
-		// for 100 ms and changes to inactive again
-		//
-		digitalWrite(enc_preset_pin, LOW);
-		zeroing = false;
-	}
+  if (zeroing && timeFromStartZeroing >= 120) {
+    //
+    // From: https://www.posital.com/media/en/fraba/productfinder/posital/datasheet-ixarc-ocd-sx_1.pdf
+    //
+    // The encoder value will be set to 0 after the preset input was active
+    // for 100 ms and changes to inactive again
+    //
+    digitalWrite(enc_preset_pin, LOW);
+    zeroing = false;
+  }
 
-	WiFiClient client = server.available();	
-	if (client)
-	{
-		debug("\n[Client connected ");
-		debug(client.remoteIP());     
-		debug(":");
-		debug(client.remotePort());
-		debug("]\n");
+  WiFiClient client = server.available();
+  if (client)
+  {
+    debug("\n[Client connected ");
+    debug(client.remoteIP());
+    debug(":");
+    debug(client.remotePort());
+    debug("]\n");
 
-		String request;
-		while (client.connected())
-		{
-			// read line by line what the client (web browser) is requesting
-			if (client.available())
-			{
-				String line = client.readStringUntil('\r');
-				request += line;
+    String request;
+    while (client.connected())
+    {
+      // read line by line what the client (web browser) is requesting
+      if (client.available())
+      {
+        String line = client.readStringUntil('\r');
+        request += line;
 
-				// wait for end of client's request, that is marked with an empty line
-				if (line.length() == 1 && line[0] == '\n')
-				{
-					client.println(make_http_reply(request));
-					break;
-				}
-			}
-		}
-		delay(1); // give the web browser time to receive the data
+        // wait for end of client's request, that is marked with an empty line
+        if (line.length() == 1 && line[0] == '\n')
+        {
+          client.println(make_http_reply(request));
+          break;
+        }
+      }
+    }
+    delay(1); // give the web browser time to receive the data
 
-				  // close the connection:
-		client.stop();
-		debugln("[Client disconnected]");
-		blink(3);
-	}
+    // close the connection:
+    client.stop();
+    debugln("[Client disconnected]");
+    blink(3);
+  }
 }

@@ -43,9 +43,9 @@ struct knownNetwork {
   const char* password;
 } knownNetworks[] = {
   { "wo", "", },
-  { "TheBlumz", "***",},
-  { "brutus", "negev2008" },
-  { "Free-TAU", "Free-TAU" },
+  //{ "TheBlumz", "***",},
+  //{ "brutus", "negev2008" },
+  //{ "Free-TAU", "Free-TAU" },
 };
 const int nKnownNetworks = sizeof(knownNetworks) / sizeof(struct knownNetwork);
 
@@ -133,6 +133,7 @@ void connectWifi() {
 
     for (attempts = 5, attempt = 0; attempt < attempts; attempt++) {
       const char *passwd = (WiFi.encryptionType(n) == ENC_TYPE_NONE) ? "" : kp->password;
+      /*
       debug("\nAttempting to connect to \"");
       debug(kp->ssid);
       debug("\", passwd: \"");
@@ -140,6 +141,10 @@ void connectWifi() {
       debug("\" attempt #");
       debug(attempt);
       debug(" ");
+      */
+      IPAddress ip(192, 168,1,6), subnet(255,255,255,0), gateway(192,168,1,1), dns(132,66,65,135);
+      WiFi.config(ip, dns, gateway, subnet);
+      //WiFi.begin();
       WiFi.begin(kp->ssid, passwd);
       elapsedMillis timeFromConnect = 0;
       while ((WiFi.status() != WL_CONNECTED) && timeFromConnect < 10000) {

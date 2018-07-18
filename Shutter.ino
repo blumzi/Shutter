@@ -1,3 +1,5 @@
+ #include <NewPing.h>
+
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 #include <elapsedMillis.h>
@@ -14,7 +16,13 @@ static const uint8_t enc_preset_pin = D7;	// zeroes the encoder
 static const uint8_t led_pin = D5;			// i'm alive LED
 static const uint8_t debug_pin = D6;		// if grounded, debug to serial port
 
-static const String version = "1.0";
+static const uint8_t echo_pin = D2;     // HC-SR04 echo pin
+static const uint8_t trig_pin = D3;     // HC-SR04 trig pin
+static const uint8_t mode_pin = D8;     // selects between draw-wire encoder and ultra-sonic range finder
+
+NewPing sonar(trig_pin, echo_pin, 400); // NewPing setup of pins and maximum distance.
+
+static const String version = "1.1";
 bool serialWasInitialized = false;
 
 #define POS_BITS		12
@@ -36,16 +44,20 @@ bool serialWasInitialized = false;
 unsigned int lookAliveInterval = 5000;
 elapsedMillis timeFromLastlookAlive = 0;
 elapsedMillis timeFromStartZeroing = 0;
+elapsedMillis timeFromSonarRead = 0;
 bool zeroing = false;
+
+enum OpMode { WIRE = 0, SONAR = 1 };
+OpMode opMode;
 
 struct knownNetwork {
   const char* ssid;
   const char* password;
 } knownNetworks[] = {
-  { "wo", "", },
   //{ "TheBlumz", "***",},
-  //{ "brutus", "negev2008" },
-  //{ "Free-TAU", "Free-TAU" },
+  { "brutus", "negev2008" },
+  { "Free-TAU", "Free-TAU" },
+  { "wo", "", },
 };
 const int nKnownNetworks = sizeof(knownNetworks) / sizeof(struct knownNetwork);
 
@@ -80,6 +92,9 @@ void setup()
   digitalWrite(enc_preset_pin, LOW);
 
   pinMode(debug_pin, INPUT_PULLUP);
+
+  pinMode(mode_pin, INPUT_PULLUP);
+  opMode = digitalRead(mode_pin) == 0 ? WIRE : SONAR;
 
   debugln("\nWise40 Dome Shutter Server.");
 
@@ -133,22 +148,26 @@ void connectWifi() {
 
     for (attempts = 5, attempt = 0; attempt < attempts; attempt++) {
       const char *passwd = (WiFi.encryptionType(n) == ENC_TYPE_NONE) ? "" : kp->password;
-      /*
+
       debug("\nAttempting to connect to \"");
       debug(kp->ssid);
       debug("\", passwd: \"");
       debug(passwd);
       debug("\" attempt #");
       debug(attempt);
-      debug(" ");
-      */
-      IPAddress ip(192, 168,1,6), subnet(255,255,255,0), gateway(192,168,1,1), dns(132,66,65,135);
+      debugln("");
+
+      IPAddress ip(192, 168,1,6);
+      IPAddress subnet(255,255,255,0);
+      IPAddress gateway(192,168,1,1);
+      IPAddress dns(132,66,65,135);
+
       WiFi.config(ip, dns, gateway, subnet);
-      //WiFi.begin();
       WiFi.begin(kp->ssid, passwd);
+
       elapsedMillis timeFromConnect = 0;
       while ((WiFi.status() != WL_CONNECTED) && timeFromConnect < 10000) {
-        delay(100);
+        delay(200);
         debug(".");
       }
 
@@ -200,6 +219,13 @@ void lookAlive() {
       timeFromLastlookAlive = 0;
     }
   }
+}
+
+unsigned int read_range_cm() {
+  unsigned int cm = sonar.convert_cm(sonar.ping_median(10));
+  
+  debug("sonar: "); debug(cm); debugln(" cm");  
+  return cm;
 }
 
 int ssi_read_bit() {
@@ -276,7 +302,8 @@ String ssi_read_encoder() {
 
 
 String help() {
-  return String("<table>"
+  if (opMode == WIRE)
+    return String("<table>"
                 " <tr><th align='left'>Cmd</th><th align='left'>Arg</th><th align='left'>Desc</th></tr>"
                 " <tr><td>help</td><td/><td>shows this help<td></tr>"
                 " <tr><td>encoder</td><td/><td>gets the current encoder value</td></tr>"
@@ -284,6 +311,14 @@ String help() {
                 " <tr><td>version</td><td/><td>prints the software version</td></tr>"
                 " <tr><td>zero</td><td>?password=******</td><td>zeroes the encoder</td></tr>"
                 "</table>");
+   else
+    return String("<table>"
+                " <tr><th align='left'>Cmd</th><th align='left'>Arg</th><th align='left'>Desc</th></tr>"
+                " <tr><td>help</td><td/><td>shows this help<td></tr>"
+                " <tr><td>range</td><td/><td>gets the current range in cm</td></tr>"
+                " <tr><td>status</td><td/><td>prints \"ok\", if alive</td></tr>"
+                " <tr><td>version</td><td/><td>prints the software version</td></tr>"
+                "</table>");    
 }
 
 String make_http_reply(String req) {
@@ -297,10 +332,13 @@ String make_http_reply(String req) {
   if (req.indexOf("GET /status HTTP/1.1") != -1) {
     content = String("ok");
   }
-  else if (req.indexOf("GET /encoder HTTP/1.1") != -1) {
+  else if (opMode == WIRE && req.indexOf("GET /encoder HTTP/1.1") != -1) {
     content = ssi_read_encoder();
   }
-  else if (req.indexOf("GET /zero?password=ne%27Gev HTTP/1.1") != -1) {
+  else if (opMode == SONAR && req.indexOf("GET /range HTTP/1.1") != -1) {
+    content = read_range_cm();
+  }
+  else if (opMode == WIRE && req.indexOf("GET /zero?password=ne%27Gev HTTP/1.1") != -1) {
     zeroing = true;
     digitalWrite(enc_preset_pin, HIGH);
     timeFromStartZeroing = 0;
@@ -343,7 +381,7 @@ void loop()
 {
   lookAlive();
 
-  if (zeroing && timeFromStartZeroing >= 120) {
+  if (opMode == WIRE && zeroing && timeFromStartZeroing >= 120) {
     //
     // From: https://www.posital.com/media/en/fraba/productfinder/posital/datasheet-ixarc-ocd-sx_1.pdf
     //

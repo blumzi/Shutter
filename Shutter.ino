@@ -373,13 +373,12 @@ String make_http_reply(String req) {
   return reply;
 }
 
-
-
-WiFiClient zeroingClient;
-
 void loop()
 {
   lookAlive();
+  
+  if (opMode == SONAR)
+    read_range_cm();
 
   if (opMode == WIRE && zeroing && timeFromStartZeroing >= 120) {
     //

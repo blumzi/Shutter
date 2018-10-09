@@ -1,4 +1,4 @@
- #include <NewPing.h>
+#include <NewPing.h>
 
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
@@ -48,18 +48,7 @@ elapsedMillis timeFromSonarRead = 0;
 bool zeroing = false;
 
 enum OpMode { WIRE = 0, SONAR = 1 };
-OpMode opMode;
-
-struct knownNetwork {
-  const char* ssid;
-  const char* password;
-} knownNetworks[] = {
-  //{ "TheBlumz", "***",},
-  { "brutus", "negev2008" },
-  { "Free-TAU", "Free-TAU" },
-  { "wo", "", },
-};
-const int nKnownNetworks = sizeof(knownNetworks) / sizeof(struct knownNetwork);
+OpMode opMode = SONAR;
 
 WiFiServer server(80);
 
@@ -71,7 +60,7 @@ bool debugging() {
     return false;
 
   if (!serialWasInitialized) {
-    Serial.begin(9600);
+    Serial.begin(115200);
     serialWasInitialized = true;
   }
 
@@ -92,9 +81,6 @@ void setup()
   digitalWrite(enc_preset_pin, LOW);
 
   pinMode(debug_pin, INPUT_PULLUP);
-
-  pinMode(mode_pin, INPUT_PULLUP);
-  opMode = digitalRead(mode_pin) == 0 ? WIRE : SONAR;
 
   debugln("\nWise40 Dome Shutter Server.");
 
@@ -118,8 +104,6 @@ String enc_type(uint8_t t) {
 
 void connectWifi() {
   int n, nDetected;
-  struct knownNetwork *kp;
-  bool connected = false;
 
   nDetected = 0;
   do {
@@ -133,58 +117,76 @@ void connectWifi() {
     debugln(" networks");
   } while (nDetected == 0);
 
+  String ssid;
+  String password = String("not-detected");
+
   for (n = 0; n < nDetected; n++) {
+    ssid = WiFi.SSID(n);
+
     debug("SSID: \"");
-    debug(WiFi.SSID(n));
+    debug(ssid);
     debug("\", RSSI: ");
     debug(WiFi.RSSI(n));
     debug(" dB, Enc: ");
     debugln(enc_type(WiFi.encryptionType(n)));
+
+    if (ssid.compareTo("TheBlumz") == 0) {
+      password = String("gandalph1");
+      break;
+    } else if (ssid.compareTo("brutus") == 0) {
+      password = String("negev2008");
+      break;
+    } else if (ssid.compareTo("wo") == 0) {
+      password = String("");
+      break;
+    }
   }
-  debugln("");
 
-  for (kp = &knownNetworks[0]; !connected && (kp - knownNetworks < nKnownNetworks); kp++) {
-    int attempts, attempt;
+  if (password.compareTo("not-detected") == 0) {
+    debugln("Did not detect a known WIFI network, bailing out!");
+    return;
+  }
 
-    for (attempts = 5, attempt = 0; attempt < attempts; attempt++) {
-      const char *passwd = (WiFi.encryptionType(n) == ENC_TYPE_NONE) ? "" : kp->password;
+  int attempts, attempt;
 
-      debug("\nAttempting to connect to \"");
-      debug(kp->ssid);
-      debug("\", passwd: \"");
-      debug(passwd);
-      debug("\" attempt #");
-      debug(attempt);
-      debugln("");
+  for (attempts = 5, attempt = 0; attempt < attempts; attempt++) {
 
-      IPAddress ip(192, 168,1,6);
-      IPAddress subnet(255,255,255,0);
-      IPAddress gateway(192,168,1,1);
-      IPAddress dns(132,66,65,135);
+    debug("\nAttempting to connect to \"");
+    debug(ssid);
+    debug("\", passwd: \"");
+    debug(password);
+    debug("\" attempt #");
+    debug(attempt);
+    debugln("");
+
+    if (ssid.compareTo("wo") == 0) {
+      IPAddress ip(192, 168, 1, 6);
+      IPAddress subnet(255, 255, 255, 0);
+      IPAddress gateway(192, 168, 1, 1);
+      IPAddress dns(132, 66, 65, 135);
 
       WiFi.config(ip, dns, gateway, subnet);
-      WiFi.begin(kp->ssid, passwd);
-
-      elapsedMillis timeFromConnect = 0;
-      while ((WiFi.status() != WL_CONNECTED) && timeFromConnect < 10000) {
-        delay(200);
-        debug(".");
-      }
-
-      if (WiFi.status() == WL_CONNECTED) {
-        debugln("");
-        debug(" Connected to \"");
-        debug(kp->ssid);
-        debug("\" as ");
-        debug(WiFi.localIP());
-        debug(", MAC: ");
-        debugln(WiFi.macAddress());
-        connected = true;
-        break;
-      }
-      else
-        WiFi.disconnect();
     }
+    WiFi.begin(ssid.c_str(), password.c_str());
+
+    elapsedMillis timeFromConnect = 0;
+    while ((WiFi.status() != WL_CONNECTED) && timeFromConnect < 10000) {
+      delay(200);
+      debug(".");
+    }
+
+    if (WiFi.status() == WL_CONNECTED) {
+      debugln("");
+      debug(" Connected to \"");
+      debug(ssid);
+      debug("\" as ");
+      debug(WiFi.localIP());
+      debug(", MAC: ");
+      debugln(WiFi.macAddress());
+      break;
+    }
+    else
+      WiFi.disconnect();
   }
 }
 
@@ -223,8 +225,8 @@ void lookAlive() {
 
 unsigned int read_range_cm() {
   unsigned int cm = sonar.convert_cm(sonar.ping_median(10));
-  
-  debug("sonar: "); debug(cm); debugln(" cm");  
+
+  debug("sonar: "); debug(cm); debugln(" cm");
   return cm;
 }
 
@@ -304,21 +306,21 @@ String ssi_read_encoder() {
 String help() {
   if (opMode == WIRE)
     return String("<table>"
-                " <tr><th align='left'>Cmd</th><th align='left'>Arg</th><th align='left'>Desc</th></tr>"
-                " <tr><td>help</td><td/><td>shows this help<td></tr>"
-                " <tr><td>encoder</td><td/><td>gets the current encoder value</td></tr>"
-                " <tr><td>status</td><td/><td>prints \"ok\", if alive</td></tr>"
-                " <tr><td>version</td><td/><td>prints the software version</td></tr>"
-                " <tr><td>zero</td><td>?password=******</td><td>zeroes the encoder</td></tr>"
-                "</table>");
-   else
+                  " <tr><th align='left'>Cmd</th><th align='left'>Arg</th><th align='left'>Desc</th></tr>"
+                  " <tr><td>help</td><td/><td>shows this help<td></tr>"
+                  " <tr><td>encoder</td><td/><td>gets the current encoder value</td></tr>"
+                  " <tr><td>status</td><td/><td>prints \"ok\", if alive</td></tr>"
+                  " <tr><td>version</td><td/><td>prints the software version</td></tr>"
+                  " <tr><td>zero</td><td>?password=******</td><td>zeroes the encoder</td></tr>"
+                  "</table>");
+  else
     return String("<table>"
-                " <tr><th align='left'>Cmd</th><th align='left'>Arg</th><th align='left'>Desc</th></tr>"
-                " <tr><td>help</td><td/><td>shows this help<td></tr>"
-                " <tr><td>range</td><td/><td>gets the current range in cm</td></tr>"
-                " <tr><td>status</td><td/><td>prints \"ok\", if alive</td></tr>"
-                " <tr><td>version</td><td/><td>prints the software version</td></tr>"
-                "</table>");    
+                  " <tr><th align='left'>Cmd</th><th align='left'>Arg</th><th align='left'>Desc</th></tr>"
+                  " <tr><td>help</td><td/><td>shows this help<td></tr>"
+                  " <tr><td>range</td><td/><td>gets the current range in cm</td></tr>"
+                  " <tr><td>status</td><td/><td>prints \"ok\", if alive</td></tr>"
+                  " <tr><td>version</td><td/><td>prints the software version</td></tr>"
+                  "</table>");
 }
 
 String make_http_reply(String req) {
@@ -336,7 +338,7 @@ String make_http_reply(String req) {
     content = ssi_read_encoder();
   }
   else if (opMode == SONAR && req.indexOf("GET /range HTTP/1.1") != -1) {
-    content = read_range_cm();
+    content = String(read_range_cm());
   }
   else if (opMode == WIRE && req.indexOf("GET /zero?password=ne%27Gev HTTP/1.1") != -1) {
     zeroing = true;

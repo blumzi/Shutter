@@ -13,12 +13,12 @@
 static const uint8_t ssi_data_pin = D2;		// ssi data
 static const uint8_t ssi_clk_pin = D3;		// ssi clk
 static const uint8_t enc_preset_pin = D7;	// zeroes the encoder
-static const uint8_t led_pin = D5;			// i'm alive LED
-static const uint8_t debug_pin = D6;		// if grounded, debug to serial port
+static const uint8_t led_pin = D5;			  // i'm alive LED
+static const uint8_t debug_pin = D6;		  // if grounded, debug to serial port
 
-static const uint8_t echo_pin = D2;     // HC-SR04 echo pin
-static const uint8_t trig_pin = D3;     // HC-SR04 trig pin
-static const uint8_t mode_pin = D8;     // selects between draw-wire encoder and ultra-sonic range finder
+static const uint8_t echo_pin = D2;       // HC-SR04 echo pin
+static const uint8_t trig_pin = D3;       // HC-SR04 trig pin
+static const uint8_t mode_pin = D8;       // selects between draw-wire encoder and ultra-sonic range finder
 
 NewPing sonar(trig_pin, echo_pin, 400); // NewPing setup of pins and maximum distance.
 
@@ -424,6 +424,6 @@ void loop()
     // close the connection:
     client.stop();
     debugln("[Client disconnected]");
-    blink(3);
+    blink(2);
   }
 }

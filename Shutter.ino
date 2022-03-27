@@ -102,6 +102,21 @@ String enc_type(uint8_t t) {
   }
 }
 
+
+String connection_status(int status) {
+  switch (status) {
+    case WL_NO_SHIELD:      return("No shield");
+    case WL_IDLE_STATUS:    return("Idle");
+    case WL_NO_SSID_AVAIL:  return("No SSID available");
+    case WL_SCAN_COMPLETED: return("Scan completed");
+    case WL_CONNECTED:      return("Connected");
+    case WL_CONNECT_FAILED: return("Connect failed");
+    case WL_CONNECTION_LOST:return("Connection lost");
+    case WL_WRONG_PASSWORD: return("Wrong password");
+    case WL_DISCONNECTED:   return("Disconnected");
+    default:                return "Unknown";
+  }
+}
 void connectWifi() {
   int n, nDetected;
 
@@ -170,23 +185,27 @@ void connectWifi() {
     WiFi.begin(ssid.c_str(), password.c_str());
 
     elapsedMillis timeFromConnect = 0;
-    while ((WiFi.status() != WL_CONNECTED) && timeFromConnect < 10000) {
+    while ((WiFi.status() != WL_CONNECTED) && timeFromConnect < 20000) {
       delay(200);
       debug(".");
     }
 
-    if (WiFi.status() == WL_CONNECTED) {
-      debugln("");
-      debug(" Connected to \"");
+    //if (WiFi.status() == WL_CONNECTED) {
+      debugln();
+      debug("Connection status: ");
+      debug(connection_status(WiFi.status()));
+      //debugln("");
+      debug(", Connected to \"");
       debug(ssid);
       debug("\" as ");
       debug(WiFi.localIP());
       debug(", MAC: ");
       debugln(WiFi.macAddress());
+      debugln();
       break;
-    }
-    else
-      WiFi.disconnect();
+    //}
+    //else
+      //WiFi.disconnect();
   }
 }
 

@@ -36,6 +36,7 @@ WiFiServer server(80);
 // Returns true if the debug_pin has been grounded
 //
 bool debugging() {
+  return true;
   if (digitalRead(debug_pin) != 0)	// the debug_pin must be grounded for DEBUG mode
     return false;
 
@@ -49,6 +50,9 @@ bool debugging() {
 
 void setup()
 {
+  Serial.begin(115200);
+  serialWasInitialized = true;
+  
   pinMode(led_pin, OUTPUT);
   digitalWrite(led_pin, HIGH);              // LED ON till WiFi is connected and server started
   pinMode(debug_pin, INPUT_PULLUP);
